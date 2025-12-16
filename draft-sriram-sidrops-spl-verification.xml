@@ -14,7 +14,7 @@
 
 <rfc xmlns:xi="http://www.w3.org/2001/XInclude"
      category="std"
-     docName="draft-sriram-sidrops-spl-verification-00"
+     docName="draft-ietf-sidrops-spl-verification-03"
      ipr="trust200902"
      xml:lang="en"
      sortRefs="true"
@@ -42,7 +42,7 @@
     </author>
 
     <author fullname="Job Snijders" initials="J." surname="Snijders">
-      <organization>Fastly</organization>
+      <organization abbrev="BSD">BSD Software Development</organization>
       <address>
         <postal>
           <street/>
@@ -50,7 +50,8 @@
           <city>Amsterdam</city>
           <country>Netherlands</country>
         </postal>
-        <email>job@fastly.com</email>
+        <email>job@bsd.nl</email>
+        <uri>https://www.bsd.nl/</uri>
       </address>
     </author>
 
@@ -75,8 +76,7 @@
 
     <keyword>BGP</keyword>
     <keyword>RPKI</keyword>
-    <keyword>Prefix-Origin Verification</keyword>
-    <keyword>Route Origin Validation</keyword>
+    <keyword>Route Origin Verification</keyword>
     <keyword>security</keyword>
     <keyword>cryptography</keyword>
     <keyword>X.509</keyword>
@@ -84,10 +84,9 @@
     <abstract>
 
       <t>
-         The Signed Prefix List (SPL) is an RPKI object that attests the complete list of prefixes which an Autonomous System (AS) may originate in the Border Gateway Protocol (BGP) routing system.
-         This document specifies an SPL-based Route Origin Verification (SPL-ROV) methodology and combines it with the ROA-based ROV (ROA-ROV) to facilitate an integrated mitigation strategy for prefix hijacks and AS abuse.
-         A additional benefit is the reduction of attack surface for forged-origin prefix hijacks.
-         The associated operational considerations associated with SPL-ROV are also discussed.
+         The Signed Prefix List (SPL) is an RPKI object that attests to the complete list of prefixes which an Autonomous System (AS) may originate in the Border Gateway Protocol (BGP).
+         This document specifies an SPL-based Route Origin Verification (SPL-ROV) methodology and combines it with the ROA-based ROV (ROA-ROV) to facilitate an integrated mitigation strategy for prefix hijacks and AS forgery.
+         The document also explains the various BGP security threats that SPL can help address and provides operational considerations associated with SPL-ROV deployment.
       </t>
     </abstract>
   </front>
@@ -96,12 +95,17 @@
     <section anchor="intro">
       <name>Introduction</name>
       <t>
-        The Signed Prefix List (SPL) <xref target="I-D.ietf-sidrops-rpki-prefixlist"/> is an Resource Public Key Infrastructure (RPKI) object that attests the complete list of prefixes which an Autonomous System (AS) may originate in the Border Gateway Protocol (BGP) routing system.
-        This document specifies an SPL-based Route Origin Verification (SPL-ROV) procedure and combines it with ROA-based ROV (ROA-ROV) <xref target="RFC6811"/><xref target="RFC9319"/> to facilitate an integrated mitigation strategy for prefix hijacks and AS abuse.
-        A additional benefit is the reduction of the attack surface for forged-origin prefix hijacks.
-        The associated operational considerations associated with SPL-ROV are also discussed.
+        The Signed Prefix List (SPL) <xref target="I-D.ietf-sidrops-rpki-prefixlist"/> is a Resource Public Key Infrastructure (RPKI) object that attests to the complete list of prefixes which an Autonomous System (AS) may originate in the Border Gateway Protocol (BGP).
+        This document specifies an SPL-based Route Origin Verification (SPL-ROV) procedure and how it can be combined with ROA-based ROV (ROA-ROV) <xref target="RFC6811"/><xref target="RFC9319"/> to facilitate an integrated mitigation strategy for prefix hijacks, AS forgery, and reduction of attack surface for forged-origin prefix hijacks.
+        An AS forgery occurs when an offending AS illegitimately inserts another AS (victim AS) as the origin in a BGP announcement (prefix may belong to a third party or the offender).
+        A forged-origin prefix hijack occurs when an offending AS makes a BGP announcement with illegitimate insertion of a {prefix, origin AS} tuple that is Valid per ROA-ROV <xref target="RFC7115"/><xref target="RFC9319"/>.
+        The various BGP security threats that SPL-ROV helps to address are described in <xref target="threats"/>.
+        Operational considerations associated with SPL-ROV are discussed in <xref target="operations"/>.
       </t>
-
+      <t>
+        The verification procedures described in this document MUST be applied to BGP routes with {AFI, SAFI} combinations {AFI 1 (IPv4), SAFI 1} and {AFI 2 (IPv6), SAFI 1} <xref target="IANA-AF"/> <xref target="IANA-SAF"/>.
+        The procedures MUST NOT be applied to other address families by default.
+      </t>
       <section anchor="requirements">
         <name>Requirements Language</name>
         <t>
@@ -115,25 +119,25 @@
          </t>
           <ul>
            <li>
-                Route is ineligible: The term has the same meaning as in <xref target="RFC4271"/>, i.e., "route is ineligible to be installed in Loc-RIB and will be excluded from the next phase of route selection."
+                "Route is ineligible": The term has the same meaning as in <xref target="RFC4271"/>, i.e., "route is ineligible to be installed in Loc-RIB and will be excluded from the next phase of route selection."
            </li>
            <li>
                 SPL: Signed Prefix List (see <xref target="I-D.ietf-sidrops-rpki-prefixlist"/>).
            </li>
            <li>
-                VSP: Validated SPL Payload (see <xref target="I-D.ietf-sidrops-rpki-prefixlist"/>).
+                VSP: Validated SPL Payload (see <xref target="SPL-and-VSP"/>).
            </li>
            <li>
                 ROA: Route Origin Authorization (see <xref target="RFC6811"/>).
            </li>
            <li>
-                ROV: Route Origin Validation (see <xref target="RFC6811"/>).
+                ROA-ROV: ROA-based Route Origin Verification (see <xref target="alg"/>).
            </li>
            <li>
                 SPL-ROV: SPL-based Route Origin Verification (see <xref target="alg"/>).
            </li>
            <li>
-                ROA-ROV: ROA-based Route Origin Verification (see <xref target="alg"/>).
+                RP: Relying Party (see <xref target="RFC6484"/>).
            </li>
           </ul>
       </section>
@@ -141,14 +145,17 @@
     <section anchor="SPL-and-VSP">
       <name>Signed Prefix List (SPL) and Validated SPL Payload (VSP)</name>
       <t>
-        The definitions and semantics of Signed Prefix List (SPL) and Validated SPL Payload (VSP) as explained in <xref target="I-D.ietf-sidrops-rpki-prefixlist"/> apply here.
-        It is worth reiterating here that the SPL object does not implicitly permit a more-specific prefix subsumed by a listed IP address prefix to be originated by the AS listed in it.
+        The definition and semantics of Signed Prefix List (SPL) are provided in <xref target="I-D.ietf-sidrops-rpki-prefixlist"/> apply here.
+        Additional clarification is that the SPL object does not implicitly permit a more-specific prefix subsumed by a listed IP address prefix to be originated by the subject AS listed in it.
         For any such more-specific prefix to be permitted by the SPL object, it must be explicitly listed in the list of IP address prefixes.
       </t>
       <t>
-        As noted in <xref target="I-D.ietf-sidrops-rpki-prefixlist"/>, multiple valid SPL objects which contain the same asID could exist.
-        In such cases, the union of sets of prefixes from the mentioned SPL objects is included in the  Validated SPL Payload (VSP) for the asID in consideration.
-        For a given asID, if there is only a valid SPL object with zero prefixes listed, then the VSP for the asID shows 'Empty' in place of the set of prefixes <xref target="I-D.ietf-sidrops-rpki-prefixlist"/>.
+        Normally there would be a single valid Signed Prefix List (SPL) object for a given asID <xref target="I-D.ietf-sidrops-rpki-prefixlist"/>.
+        However, if multiple valid SPL objects which contain the same asID exist, then union of the resulting address prefix members forms the complete set of members.
+        The complete set (resulting from a single or multiple SPLs) is locally stored by a Relying Party (RP) or compliant router, and such an object is called the Validated SPL Payload (VSP) for the asID in consideration.
+        For a given asID, there may be only a valid SPL object with zero prefixes listed.
+        By creating such an empty SPL object, the subject AS is declaring that it does not originate any prefixes.
+        For an empty SPL, the corresponding VSP conveys 'Empty' in place of the set of prefixes <xref target="I-D.ietf-sidrops-rpki-prefixlist"/>.
       </t>
     </section>
     <!--
@@ -175,7 +182,7 @@
       </t>
     </section>
     -->
-<!--
+    <!--
     <section title="Route Verification: State Space and Outcomes" anchor="outcomes">
       <t>
         The state-space for route verification considering ROV and PrefixList is enumerated in <xref target="state-space"/>.
@@ -263,54 +270,302 @@
           </tbody>
         </table>
     </section>
--->
-    <section title="Combined ROV Algorithm Using ROA and SPL" anchor="alg">
+    -->
+    <section title="Route Origin Verification Algorithms Using ROA and SPL" anchor="alg">
       <t>
-        The general principles on which the algorithm is based are as follows.
-        The received route is considered Invalid if (1) the route's AS_PATH contains an AS_SET, or (2) the origin AS has a VSP but it does not include the route prefix, or (3) the prefix has a covering VRP(s) but there is no covering VRP that contains the route's origin AS as well as a maxLength value that is equal to or greater than the route's prefix length.  
-        A step-wise procedure for the combined SPL and ROA based verification is given below.
-        A compliant eBGP router MUST implement the procedure.    
-     </t>
+        SPLs provide a second means to perform route origin verification (ROV) based upon RPKI data. In this document, we refer to the ROV based upon ROA data as ROA-ROV and the ROV based upon SPL data (algorithm described below) as SPL-ROV.
+      </t>
+      <t>
+        This document makes no changes to the ROA-ROV procedure defined in <xref target="RFC6811" section="2"/>. The SPL-ROV procedure described below is designed to augment and integrate with the existing ROA-ROV procedures. The ROA-ROV and SPL-ROV procedures produce independent verification results referred to as ROA-ROV-state and SPL-ROV-state, respectively.
+      </t>
+      <t>
+        An eBGP router that conforms to this specification MUST implement both the ROA-ROV and SPL-ROV procedures specified below.
+      </t>
+      <!--
+      <t>
+        The Route Origin Verification (ROV) procedure using ROA data is named as ROA-ROV in this document.
+        The ROV procedure using SPL data is named as SPL-ROV.
+        The verification states of a route based on these procedures are called ROA-ROV-state and SPL-ROV-state, respectively.
+        The ROA-ROV procedure is the same as that in <xref target="RFC6811" section="2"/> and the ROA-ROV-state is set as follows:
+      </t>
+      -->
+      <t>
+        For each received BGP route:
+      </t>
       <ol>
         <li>
-            If the route contains an AS_SET, then set the SPL-ROV state = Invalid and go to Step 4.
+            Set the ROA-ROV-state = the outcome (NotFound, Valid, or Invalid) of the route origin verification procedure in <xref target="RFC6811" section="2"/>.
+        </li>
+
+        <!--
+        <li>
+            If the route's validation state per <xref target="RFC6811" section="2"/> is NotFound, then set the ROA-ROV-state = NotFound and stop.
             Else, continue.
         </li>
         <li>
-            If the route's origin AS does not have a VSP, then set the SPL-ROV state = NotFound and go to Step 4.
-            Else, continue.
+            If the route's validation state per <xref target="RFC6811" section="2"/> is Valid, then set the ROA-ROV-state = Valid and stop.
+            Else, continue. 
         </li>
         <li>
-            If the route's origin AS's VSP includes the route prefix, then set the SPL-ROV state = Valid and go to Step 4.
-            Else, set the SPL-ROV state = Invalid. Continue to the next step.
+            If the route's validation state per <xref target="RFC6811" section="2"/> is Invalid, then set the ROA-ROV-state = Invalid and stop.
+        </li>
+        -->
+        
+        <li>
+            If the route contains an AS_SET, then set the SPL-ROV-state = Invalid and stop.
         </li>
         <li>
-            If the route's validation state per <xref target="RFC6811" section="2"/> is NotFound and the route does not contain any AS_SET, then set the ROA-ROV state = NotFound and halt.
-            Else, continue.
+            Else, if the route's origin AS does not have a VSP, then set the SPL-ROV-state = NotFound and stop.
         </li>
         <li>
-            If the route's validation state per <xref target="RFC6811" section="2"/> is NotFound and the route contains an AS_SET, then set the ROA-ROV state = Invalid and halt.
-            Else, continue.
+            Else, if the route's origin AS's VSP includes the route prefix, then set the SPL-ROV-state = Valid and stop.
         </li>
         <li>
-            If the route's validation state per <xref target="RFC6811" section="2"/> is Valid, then set the ROA-ROV state = Valid and halt. Else, set the ROA-ROV state = Invalid and halt.
+            Else, set the SPL-ROV-state = Invalid and stop.
         </li>
         </ol>
+
+        <!-- The general principles on which the algorithm is based are as follows.
+        A received route is considered Invalid if (1) the route's AS_PATH contains an AS_SET, or (2) the origin AS has a VSP but it does not include the route prefix, or (3) the prefix has a covering VRP(s) but there is no covering VRP that contains the route's origin AS as well as a maxLength value that is equal to or greater than the route's prefix length. -->  
+
+      <!--
+      <ol>
+        <li>
+            If the route contains an AS_SET, then set the SPL-ROV-state = Invalid and go to Step 4.
+            Else, continue.
+        </li>
+        <li>
+            If the route's origin AS does not have a VSP, then set the SPL-ROV-state = NotFound and go to Step 4.
+            Else, continue.
+        </li>
+        <li>
+            If the route's origin AS's VSP includes the route prefix, then set the SPL-ROV-state = Valid and go to Step 4.
+            Else, set the SPL-ROV-state = Invalid. Continue to the next step.
+        </li>
+        <li>
+            If the route's validation state per <xref target="RFC6811" section="2"/> is NotFound and the route does not contain any AS_SET, then set the ROA-ROV-state = NotFound and stop.
+            Else, continue.
+        </li>
+        <li>
+            If the route's validation state per <xref target="RFC6811" section="2"/> is NotFound and the route contains an AS_SET, then set the ROA-ROV-state = Invalid and stop.
+            Else, continue.
+        </li>
+        <li>
+            If the route's validation state per <xref target="RFC6811" section="2"/> is Valid, then set the ROA-ROV-state = Valid and stop. Else, set the ROA-ROV-state = Invalid and stop.
+        </li>
+        </ol>
+        -->
     </section>
     <section title="Mitigation Policy" anchor="mitig">
       <t>
        The specific configuration of a mitigation policy is at the discretion of the network operator.
-       However, the following mitigation policy is recommended.
+       However, the following mitigation policy is highly recommended.
       </t>
       <t>
-       If the route's SPL-ROV state = Invalid or ROA-ROV state = Invalid (<xref target="alg"/>), then the route SHOULD be considered ineligible for route selection (see <xref target="terminology"/>) and MUST be kept in the Adj-RIB-In for potential future re-evaluation (see <xref target="RFC9324"/>).
-       To be clear, the above applies when either or both of the two states is (or are) Invalid.
-       Routes with all other combinations of the SPL-ROV and ROA-ROV states (i.e., Valid-Valid, Valid-NotFound, NotFound-Valid, NotFound-NotFound) SHOULD get the same preference level relative to each other (assuming other path properties are equal). In other words, Valid state by itself does not raise the route priority level over NotFound state.
+       If either the route's SPL-ROV-state or ROA-ROV-state = Invalid (<xref target="alg"/>), then the route SHOULD be considered ineligible for route selection (see <xref target="terminology"/>) but MUST be kept in the Adj-RIB-In for potential future re-evaluation (see <xref target="RFC9324"/>).
+       To be clear, the above applies when either or both of the two ROV states is (or are) Invalid.
+       Routes with all other combinations of the SPL-ROV and ROA-ROV states (i.e., Valid-Valid, Valid-NotFound, NotFound-Valid, NotFound-NotFound) SHOULD be considered eligible for best path selection and SHOULD get the same preference level relative to each other (assuming other path properties are equal).
       </t>
+      <t>
+       For visualization purposes, <xref target="state-space"/> below lists all possible combinations of the ROA-ROV and SPL-ROV states and the associated recommendations for the route's eligibility for path selection.
+       <!-- It is sufficient for implementations to mark routes with ROA-ROV-state and SPL-ROV-state for mitigation purposes. It is not necessary to tag the routes with the combined ROV state. -->
+      </t>
+        <table anchor="state-space" align="center">
+          <name/>
+          <thead>
+            <tr>
+              <th rowspan="1" colspan="1">Index</th>
+              <th rowspan="1" colspan="1">ROA-ROV-state</th>
+              <th rowspan="1" colspan="1">SPL-ROV-state</th>
+              <th rowspan="1" colspan="1">Route Selection</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Valid</td>
+              <td>Valid</td>
+              <td>Eligible</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Valid</td>
+              <td>NotFound</td>
+              <td>Eligible</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>Valid</td>
+              <td>Invalid</td>
+              <td>Ineligible</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>NotFound</td>
+              <td>Valid</td>
+              <td>Eligible</td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td>NotFound</td>
+              <td>NotFound</td>
+              <td>Eligible</td>
+            </tr>
+            <tr>
+              <td>6</td>
+              <td>NotFound</td>
+              <td>Invalid</td>
+              <td>Ineligible</td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td>Invalid</td>
+              <td>Valid</td>
+              <td>Ineligible</td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td>Invalid</td>
+              <td>NotFound</td>
+              <td>Ineligible</td>
+            </tr>
+            <tr>
+              <td>9</td>
+              <td>Invalid</td>
+              <td>Invalid</td>
+              <td>Ineligible</td>
+            </tr>
+          </tbody>
+        </table>
     </section>
+        <!--
+        <table anchor="state-space" align="center">
+          <name/>
+          <thead>
+            <tr>
+              <th rowspan="1" colspan="1">Index</th>
+              <th rowspan="1" colspan="1">ROA-ROV-state</th>
+              <th rowspan="1" colspan="1">SPL-ROV-state</th>
+              <th rowspan="1" colspan="1">Combined ROV state</th>
+              <th rowspan="1" colspan="1">Route Selection</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Valid</td>
+              <td>Valid</td>
+              <td>Valid</td>
+              <td>Eligible</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Valid</td>
+              <td>NotFound</td>
+              <td>Valid</td>
+              <td>Eligible</td>
+            </tr>
+            <tr>
+              <td>3</td>
+              <td>Valid</td>
+              <td>Invalid</td>
+              <td>Invalid</td>
+              <td>Ineligible</td>
+            </tr>
+            <tr>
+              <td>4</td>
+              <td>NotFound</td>
+              <td>Valid</td>
+              <td>NotFound</td>
+              <td>Eligible</td>
+            </tr>
+            <tr>
+              <td>5</td>
+              <td>NotFound</td>
+              <td>NotFound</td>
+              <td>NotFound</td>
+              <td>Eligible</td>
+            </tr>
+            <tr>
+              <td>6</td>
+              <td>NotFound</td>
+              <td>Invalid</td>
+              <td>Invalid</td>
+              <td>Ineligible</td>
+            </tr>
+            <tr>
+              <td>7</td>
+              <td>Invalid</td>
+              <td>Valid</td>
+              <td>Invalid</td>
+              <td>Ineligible</td>
+            </tr>
+            <tr>
+              <td>8</td>
+              <td>Invalid</td>
+              <td>NotFound</td>
+              <td>Invalid</td>
+              <td>Ineligible</td>
+            </tr>
+            <tr>
+              <td>9</td>
+              <td>Invalid</td>
+              <td>Invalid</td>
+              <td>Invalid</td>
+              <td>Ineligible</td>
+            </tr>
+          </tbody>
+        </table>
+        -->
+
+
+      <section title="BGP Security Threats Addressed by SPL-ROV" anchor="threats">
+      <t>
+        The BGP security threats addressed by deploying SPL-ROV together with ROA-ROV (<xref target="alg"/>) and the mitigation policy (<xref target="mitig"/>) are discussed below.
+        <!-- Given that a VSP exists for an asID, if a prefix route is announced whose origin AS matches the asID but the prefix is not listed in the VSP, then the route is considered Invalid per SPL-ROV.
+        The network operator may consider such a route ineligible <xref target="RFC4271"/> for route selection, regardless of the route's ROA-ROV status <xref target="RFC6811"/>.
+        Similarly, the operator may consider an ROA-ROV Invalid route ineligible for route selection, regardless of the route's SPL-ROV status.
+        If the above stated policy is implemented, SPL-ROV solves the additional routing security problems listed below while ROA-ROV detects accidental prefix hijacks.
+        More details concerning the procedures for SPL-ROV will be provided in a separate draft. -->
+      </t>
+      <ol>
+        <li>
+        <strong>AS Forgery While Hijacking an ROA-ROV-NotFound Prefix:</strong>
+        If AS A creates an SPL, it is protected by SPL-ROV in case an offending AS X inserts AS A as the origin AS and announces a third-party prefix not covered by a ROA.
+        </li>
+        <li>
+        <strong>AS Forgery Together with a Conflicting ROA:</strong>
+        A conflicting ROA is one which attests the origination of a prefix from an AS but the AS has not included the specific prefix in its SPL.
+        Consider the scenario in which AS A creates a Signed Prefix List.
+        In this case, AS A is protected by SPL-ROV if an offending AS X inserts AS A as the origin AS and announces a prefix for which AS X holds an RPKI certificate and has signed a conflicting ROA showing AS A as the origin.
+        </li>
+        <li>
+        <strong>AS Accidentally Strips AS_PATH and Mis-Originates Prefixes:</strong>
+        An AS learns a route from an eBGP neighbor and announces the prefix to another eBGP neighbor as if it is being originated by it (i.e., strips the received AS_PATH and re-originates the prefix).
+        This can be called a re-origination or mis-origination attack (also see Type 5 route leak in <xref target="RFC7908"/>).
+        This attack has been seen to happen in practice due to malfunctioning route optimizers.
+        It can be mitigated at neighboring ASes by SPL-ROV if the AS in consideration has registered an SPL.
+        </li>
+        <li>
+        <strong>Attack Surface Reduction:</strong>
+        Often a prefix owner includes more prefixes and/or more more-specific prefixes (using maxLength or otherwise) in their ROA but has no plans to announce some or many of them.
+        Such overly broad ROAs create a larger attack surface for forged-origin prefix and/or subprefix hijacks (<xref target="intro"/>).
+        Creation of an SPL and the deployment of SPL-ROV can reduce this attack surface by effectively restricting the broad set of prefixes announcements authorized by the ROA to the subset of prefixes originated by the origin AS (i.e., prefixes in its VSP).
+
+        <!--However, they would notify the operator of the AS serving them for origination purposes about the prefixes they do intend to announce, and only those prefixes would be included in the AS's SPL.
+        This helps to reduce the attack surface for the forged-origin hijacks when SPL-ROV is applied. -->
+        </li>
+        <li>
+        <strong>AS can declare itself "Not Originating Prefixes in the Internet":</strong>
+        An SPL can be created with an empty prefix list in it.
+        In doing this, the AS is asserting that it is not originating any prefixes in the Internet.
+        Any route showing this AS as the origin AS is Invalid per SPL-ROV.
+        </li>
+      </ol>
+      </section>
 
 <!--
-      <section title="Problems Solved by PrefixList" anchor="problems">
+      <section title="Problems Solved by PrefixList" anchor="threats">
       <t>
         Given that a VSP exists for an asID, if a prefix route is announced whose origin AS matches the asID but the prefix is not listed in the VSP, then the route is considered Invalid per PrefixList verification.
         The network operator may consider such a route ineligible <xref target="RFC4271"/> for route selection, regardless of the route's RPKI Route Origin Validation (ROV) status <xref target="RFC6811"/>.
@@ -320,21 +575,21 @@
       </t>
       <ol>
         <li>
-        <strong>AS Abuse While Hijacking an ROV-Unknown Prefix:</strong>
+        <strong>AS Forgery While Hijacking an ROV-Unknown Prefix:</strong>
         If AS A creates a PrefixList, it is protected in case an offending AS X inserts AS A as the origin AS and hijacks a third-party prefix not covered by a ROA.
         </li>
         xxxx
         The route will be ROV-Unknown and PrefixList Invalid and hence
         considered ineligible by an RP (see #6 in <xref target="state-space"/>).
-        Thus, AS A protects itself from this form of AS abuse.
+        Thus, AS A protects itself from this form of AS Forgery.
         xxxx
         <li>
-        <strong>AS Abuse Together with a Bogus ROA:</strong>
+        <strong>AS Forgery Together with a Bogus ROA:</strong>
         If AS A creates a PrefixList, it is protected in case an offending AS X inserts AS A as the origin AS and announces a prefix for which AS X has an RPKI certificate and a bogus ROA showing AS A as the origin.
         xxxx
         The route will be ROV-Valid due to the bogus ROA but PrefixList Invalid
         and hence considered ineligible by an RP (see #3 in <xref target="state-space"/>).
-        Thus, AS A protects itself from this second form of AS abuse as well.
+        Thus, AS A protects itself from this second form of AS Forgery as well.
         xxxx
         </li>
         <li>
@@ -385,30 +640,28 @@
       <section title="Considerations when Prefix Owner Splits a Prefix" anchor="split-prefix">
         <t>
         A prefix owner with a prefix listed in the SPL of an AS may one day decide to split its prefix and announce only a more-specific prefix (subsumed under the prefix) from the AS in consideration.
-        This operation needs to be managed gracefully applying the make-before-break principle.
-        When notified of the intent, the AS must update its SPL to add the more-specific prefix while keeping the original prefix.
-        However, the updated SPL would take some time to propagate to the RPs.
-        So, the AS must continue to announce the original prefix as well as the more-specific prefix for the period of time necessary for the propagation of the updated SPL.
-        The period of time may be based on a measure of the propagation time such as its anticipated 95th-percentile value plus a margin.
+        This operation needs to be managed carefully by applying the make-before-break principle.
+        When notified of the intent, the AS must update its SPL to add the more-specific prefix while maintaining the original prefix.
+        However, the updated SPL will take time to propagate to the RPs throughout the Internet.
+        So, the AS must continue to announce the original prefix as well as the more-specific prefix for at least a period greater than the estimated propagation time of the updated SPL.
+        <!-- This period of time may be based on an estimated measure of the propagation time such as its estimated (commonly accepted) 95th-percentile value plus a margin. -->
         At a later time, the less specific prefix may be removed from the AS's SPL.
-        The prefix owner is kept informed about the operational procedure so the expectations can be properly managed.
+        The prefix owner should be kept informed about the operational procedure so the expectations can be properly managed.
         </t>
       </section>
       <section title="Considerations when Prefix Owner Has a New Prefix" anchor="new-prefix">
         <t>
-        A prefix owner with a prefix listed in the SPL of an AS may one day obtain a new prefix
-        and request the AS operator to announce it.
-        The AS operator should recommend to the prefix owner to create a ROA for the new prefix if not already done.
-        The prefix owner may or may not be RPKI capable.
-        In any case, the AS operator must update its SPL to add the new prefix.
-        The prefix owner may expect the new prefix to be announced shortly after making the request.
-        However, the updated SPL would take some time to propagate to the RPs.
-        The operator must to apply the make-before-break principle.
-        The operator must delay the announcement of the new prefix for a period of time necessary
-        for the propagation of the updated SPL.
-        The period of time may be based on a measure of the propagation time such as
-        its anticipated 95th-percentile value plus a margin.
-        The prefix owner is kept informed of the resulting wait time.
+        A prefix owner with a new prefix may request the AS operator with an SPL to announce it.
+        The AS operator SHOULD recommend the prefix owner to create a ROA for the new prefix.
+        The AS operator MUST update its SPL to add the new prefix.
+        Ubiquitous BGP propagation of the routes based upon the new prefix cannot be achieved until the updated SPL has propagated to RPs throughout the Internet.
+        AS operators that make such SPL updates may choose to delay announcement of the new prefix to minimize triggering SPL-ROV Invalids at down-path ASes.
+
+        <!-- The prefix owner may expect the new prefix to be announced shortly after making the request.
+        However, the updated SPL will take some time to propagate to RPs throughout the Internet.
+        So, the operator must delay the announcement of the new prefix for a period of time necessary for the propagation of the updated SPL.
+        The period of time may be based on an estimated measure of the propagation time such as its estimated (commonly accepted) 95th-percentile value plus a margin.
+        The prefix owner should be kept informed of the resulting wait time. -->
         </t>
       </section>
 
@@ -416,17 +669,17 @@
         <t>
         A prefix owner may dispute with the originating AS that its prefix has not been included in the AS's SPL.
         This can happen due to miscommunication or operational errors at the AS.
-        A compliant AS should have vigilant operational processes to avoid such discrepancies and fix any such issues expeditiously.
+        A compliant AS should have appropriate operational processes to avoid such discrepancies and fix any such issues expeditiously.
         </t>
       </section>
 
    <section title="DoS/DDoS Mitigation Service Provider">
     <t>
-      An AS (owning some prefixes) may have a mitigation service provider (MSP) for protection from Denial of Service (DoS)/Distributed DoS (DDoS) attacks targeting servers with IP addresses in the prefixes the AS originates.
+      An AS may have a DoS/DDoS mitigation service provider (MSP) to defend against attacks targeting systems within its originated address space.
       Such an AS may request the MSP to include the prefixes contracted for the protection service to be included in the MSP AS's SPL.
-      The prefixes under such a contract would be typically more-specific prefixes under the regularly announced prefixes.
+      The prefixes under such a contract would be typically more-specific prefixes than the AS's normal announcements.
       With such an SPL in place, in the event of an attack, the MSP AS can announce the more-specific prefixes for mitigation purposes and they will be Valid per SPL-ROV.
-      It is assumed that appropriate ROAs are also registered in advance so that the announcements can pass ROA-ROV as well <xref target="RFC9319"/>.
+      It is assumed that appropriate ROAs are also registered in advance so that the announcements are Valid per ROA-ROV as well <xref target="RFC9319"/>.
       </t>
       </section>
       <!--
@@ -457,6 +710,18 @@
           This document has no IANA considerations.
         </t>
     </section>
+    <section anchor="security">
+      <name>Security Considerations</name>
+        <t>
+          In the SPL profile specification <xref target="I-D.ietf-sidrops-rpki-prefixlist"/>, it is highly RECOMMENDED that an AS should only maintain one SPL that contains all the prefixes originated or intended to be originated by that AS.
+          If an operator chooses to maintain multiple SPL objects (each with only a subset of the prefixes that could be originated by the AS), then consideration must be given to the risk imposed in scenarios in which an RP might receive some but not all of the SPL objects.
+          Given the semantics of the SPL data as a comprehensive permit list for an AS's BGP originations, receiving some, but not all, SPL data of an AS can result in unintended route filtering and potential loss of reachability.
+        </t>
+
+          <!-- The SPL is in essence a permit list and any route with a prefix not included in the SPL while having the AS in the SPL as the origin is denied (considered ineligible). So, an AS creating an SPL must ensure that all prefixes it originates or intends to originate are correctly included in the SPL.
+
+          In case there are multiple SPLs for an AS, all of them must be available to the RPs. Otherwise, the prefixes in any missing SPLs will experience service disruption. -->
+    </section>
   </middle>
 
   <back>
@@ -475,10 +740,34 @@
       </references>
 
       <references>
-        <name>Informative References</name>
+      <name>Informative References</name>
+       <xi:include href="https://xml2rfc.ietf.org/public/rfc/bibxml/reference.RFC.6484.xml"/>
+       <xi:include href="https://xml2rfc.ietf.org/public/rfc/bibxml/reference.RFC.7115.xml"/>
+       <xi:include href="https://xml2rfc.ietf.org/public/rfc/bibxml/reference.RFC.7908.xml"/>
        <xi:include href="https://xml2rfc.ietf.org/public/rfc/bibxml/reference.RFC.9319.xml"/>
+       <reference anchor="IANA-AF" target="https://www.iana.org/assignments/address-family-numbers/address-family-numbers.xhtml" quote-title="true">
+        <front>
+          <title>Address Family Numbers</title>
+          <author>
+            <organization>IANA</organization>
+          </author>
+          <date/>
+        </front>
+        <!-- <seriesInfo name="Reachable from" value="http://www.iana.org/numbers.html"/> -->
+      </reference>
+
+      <reference anchor="IANA-SAF" target="https://www.iana.org/assignments/safi-namespace/safi-namespace.xhtml" quote-title="true">
+          <front>
+            <title>Subsequent Address Family Identifiers (SAFI) Parameters</title>
+            <author>
+              <organization>IANA</organization>
+            </author>
+            <date/>
+          </front>
+        <!-- <seriesInfo name="Reachable from" value="http://www.iana.org/numbers.html"/> -->
+        </reference>
       </references>
-    </references>
+      </references>
 
       <!--
       <section anchor="acknowledgements">
